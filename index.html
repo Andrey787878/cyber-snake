@@ -1,0 +1,303 @@
+ <!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Cyber Snake</title>
+    <!-- Подключаем Telegram WebApp SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        /* Стиль "Cyberpunk" из твоего файла */
+        :root {
+            --primary-red: #ff0000;
+            --dark-red: #8b0000;
+            --bg-black: #050505;
+            --text-color: #ff4d4d;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-black);
+            color: var(--text-color);
+            font-family: 'Courier New', monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden; /* Чтобы не скроллилось при игре */
+        }
+
+        h2 {
+            margin: 10px 0;
+            text-shadow: 0 0 10px var(--dark-red);
+            font-size: 1.5rem;
+        }
+
+        .game-info {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 10px;
+            font-weight: bold;
+            font-size: 1.1rem;
+        }
+
+        .game-container {
+            position: relative;
+            width: 300px;
+            height: 300px; /* Чуть меньше для мобилок */
+            border: 2px solid var(--primary-red);
+            background-color: #000;
+            box-shadow: 0 0 15px rgba(255, 0, 0, 0.2);
+        }
+
+        .snake-segment {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background-color: var(--primary-red);
+            border: 1px solid #000;
+            box-sizing: border-box;
+        }
+
+        .food {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background-color: #fff;
+            border-radius: 50%;
+            box-shadow: 0 0 5px #fff;
+            box-sizing: border-box;
+        }
+
+        /* Кнопки управления для мобильных устройств */
+        .controls {
+            margin-top: 20px;
+            display: grid;
+            grid-template-columns: repeat(3, 60px);
+            grid-gap: 10px;
+        }
+
+        .btn {
+            width: 60px;
+            height: 60px;
+            background-color: #1a0000;
+            border: 1px solid var(--primary-red);
+            color: var(--primary-red);
+            font-size: 24px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            user-select: none; /* Чтобы не выделялись при нажатии */
+        }
+
+        .btn:active {
+            background-color: var(--primary-red);
+            color: #000;
+        }
+        
+        .btn-up { grid-column: 2; }
+        .btn-left { grid-column: 1; grid-row: 2; }
+        .btn-down { grid-column: 2; grid-row: 2; }
+        .btn-right { grid-column: 3; grid-row: 2; }
+
+    </style>
+</head>
+<body>
+
+    <h2>CYBER SNAKE</h2>
+    
+    <div class="game-info">
+        <span>Счет: <span id="score">0</span></span>
+        <span>Рекорд: <span id="highscore">0</span></span>
+    </div>
+
+    <div id="game-board" class="game-container"></div>
+
+    <!-- Контроллер для пальцев -->
+    <div class="controls">
+        <div class="btn btn-up" onclick="setDirection('up')">▲</div>
+        <div class="btn btn-left" onclick="setDirection('left')">◀</div>
+        <div class="btn btn-down" onclick="setDirection('down')">▼</div>
+        <div class="btn btn-right" onclick="setDirection('right')">▶</div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand(); // Растягиваем на весь экран
+
+        // Настройки игры
+        const boardSize = 300;
+        const cellSize = 20;
+        const board = document.getElementById('game-board');
+        const scoreEl = document.getElementById('score');
+        const highscoreEl = document.getElementById('highscore');
+
+        let snake = [{x: 100, y: 100}, {x: 80, y: 100}, {x: 60, y: 100}];
+        let food = {x: 200, y: 200};
+        let direction = 'right';
+        let nextDirection = 'right'; // Чтобы нельзя было резко развернуться на 180
+        let score = 0;
+        let highscore = localStorage.getItem('snake_highscore') || 0;
+        highscoreEl.textContent = highscore;
+        let gameInterval;
+        let gameSpeed = 150;
+        let isGameRunning = false;
+
+        // Главная кнопка Телеграма - СТАРТ
+        tg.MainButton.setText("ИГРАТЬ");
+        tg.MainButton.show();
+        tg.MainButton.onClick(() => {
+            if (!isGameRunning) {
+                startGame();
+            } else {
+                // Если игра идет, кнопка может служить паузой или рестартом
+                resetGame();
+            }
+        });
+
+        function createFood() {
+            // Генерируем еду так, чтобы она не попала в змейку
+            let validPosition = false;
+            while(!validPosition) {
+                food.x = Math.floor(Math.random() * (boardSize / cellSize)) * cellSize;
+                food.y = Math.floor(Math.random() * (boardSize / cellSize)) * cellSize;
+                
+                validPosition = true;
+                for (let segment of snake) {
+                    if (segment.x === food.x && segment.y === food.y) {
+                        validPosition = false;
+                        break;
+                    }
+                }
+            }
+        }
+
+        function draw() {
+            board.innerHTML = '';
+            
+            // Рисуем еду
+            const foodEl = document.createElement('div');
+            foodEl.className = 'food';
+            foodEl.style.left = food.x + 'px';
+            foodEl.style.top = food.y + 'px';
+            board.appendChild(foodEl);
+
+            // Рисуем змейку
+            snake.forEach((segment, index) => {
+                const segEl = document.createElement('div');
+                segEl.className = 'snake-segment';
+                segEl.style.left = segment.x + 'px';
+                segEl.style.top = segment.y + 'px';
+                // Голова чуть темнее
+                if (index === 0) segEl.style.backgroundColor = '#8b0000';
+                board.appendChild(segEl);
+            });
+        }
+
+        function move() {
+            direction = nextDirection;
+            const head = { ...snake[0] };
+
+            if (direction === 'up') head.y -= cellSize;
+            if (direction === 'down') head.y += cellSize;
+            if (direction === 'left') head.x -= cellSize;
+            if (direction === 'right') head.x += cellSize;
+
+            // Проверка на столкновения
+            if (head.x < 0 || head.x >= boardSize || head.y < 0 || head.y >= boardSize || checkSelfCollision(head)) {
+                gameOver();
+                return;
+            }
+
+            snake.unshift(head);
+
+            // Если съели еду
+            if (head.x === food.x && head.y === food.y) {
+                score += 10;
+                scoreEl.textContent = score;
+                tg.HapticFeedback.impactOccurred('light'); // Вибрация при поедании
+                createFood();
+                // Ускоряем игру немного
+                if (gameSpeed > 50) gameSpeed -= 2;
+                clearInterval(gameInterval);
+                gameInterval = setInterval(move, gameSpeed);
+            } else {
+                snake.pop(); // Удаляем хвост, если не ели
+            }
+
+            draw();
+        }
+
+        function checkSelfCollision(head) {
+            for (let i = 0; i < snake.length; i++) {
+                if (head.x === snake[i].x && head.y === snake[i].y) return true;
+            }
+            return false;
+        }
+
+        function startGame() {
+            if (isGameRunning) return;
+            resetVariables();
+            isGameRunning = true;
+            tg.MainButton.setText("ЗАНОВО");
+            createFood();
+            draw();
+            gameInterval = setInterval(move, gameSpeed);
+        }
+
+        function resetVariables() {
+            snake = [{x: 100, y: 100}, {x: 80, y: 100}, {x: 60, y: 100}];
+            direction = 'right';
+            nextDirection = 'right';
+            score = 0;
+            gameSpeed = 150;
+            scoreEl.textContent = 0;
+        }
+
+        function gameOver() {
+            clearInterval(gameInterval);
+            isGameRunning = false;
+            tg.HapticFeedback.notificationOccurred('error'); // Вибрация ошибки
+            
+            if (score > highscore) {
+                highscore = score;
+                localStorage.setItem('snake_highscore', highscore);
+                highscoreEl.textContent = highscore;
+                tg.showAlert(`Новый рекорд: ${score}!`);
+            } else {
+                tg.showAlert(`Игра окончена. Счет: ${score}`);
+            }
+            tg.MainButton.setText("ИГРАТЬ СНОВА");
+        }
+        
+        function resetGame() {
+             clearInterval(gameInterval);
+             isGameRunning = false;
+             startGame();
+        }
+
+        // Управление
+        function setDirection(newDir) {
+            tg.HapticFeedback.selectionChanged(); // Легкий щелчок
+            if (newDir === 'up' && direction !== 'down') nextDirection = 'up';
+            if (newDir === 'down' && direction !== 'up') nextDirection = 'down';
+            if (newDir === 'left' && direction !== 'right') nextDirection = 'left';
+            if (newDir === 'right' && direction !== 'left') nextDirection = 'right';
+        }
+
+        // Поддержка клавиатуры (для теста на компе)
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowUp') setDirection('up');
+            if (e.key === 'ArrowDown') setDirection('down');
+            if (e.key === 'ArrowLeft') setDirection('left');
+            if (e.key === 'ArrowRight') setDirection('right');
+        });
+
+        draw(); // Начальная отрисовка
+    </script>
+</body>
+</html>
